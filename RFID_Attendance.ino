@@ -2,39 +2,62 @@
 #include <MFRC522.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
+#include <SD.h>
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
-#include <WiFiManager.h> // Install author: tzapu
+#include <WiFiManager.h>  // Install author: tzapu
 
-#define SS_PIN D4  // SDA / SS pin
-#define RST_PIN D1  // RST pin
-#define BUZZER_PIN D8 // Buzzer pin
+#define SS_PIN D4      // SDA / SS pin
+#define RST_PIN D1     // RST pin
+#define BUZZER_PIN D8  // Buzzer pin
+#define SD_CS_PIN D2   // SD card CS pin
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);  // Create MFRC522 instance
 
-const int flashButtonPin = 0; 
+const int flashButtonPin = 0;
 const char* serverUrl = "http://192.168.1.21/rfiddemo/getUID.php";
 
 // Onboard LED
 #define ON_Board_LED 2  // Onboard LED
 
-void setup() {  
+void setup() {
   Serial.begin(115200);
   pinMode(flashButtonPin, INPUT);
   pinMode(ON_Board_LED, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
 
-  SPI.begin();  // Init SPI bus
+  // Initialize SPI and MFRC522
+  SPI.begin();         // Init SPI bus
   mfrc522.PCD_Init();  // Init MFRC522 card
   Serial.println("MFRC522 Initialized");
 
-  WiFiManager wifiManager;
-  if (!wifiManager.autoConnect("Wifi Re-Configure")) {
-    Serial.println("Failed to connect and hit timeout");
-    ESP.reset();
-    delay(1000);
+  // Initialize SD card
+  if (!SD.begin(SD_CS_PIN)) {
+    Serial.println("Initialization of SD card failed!");
+    return;
   }
-  Serial.println("Connected to Wi-Fi!");
+  Serial.println("SD card initialized.");
+
+  // Read Wi-Fi credentials from file
+  File configFile = SD.open("/wifi_config.txt");
+  if (!configFile) {
+    Serial.println("Failed to open wifi_config.txt file!");
+    return;
+  }
+
+  String ssid = configFile.readStringUntil('\n');
+  ssid.trim();
+  String password = configFile.readStringUntil('\n');
+  password.trim();
+  configFile.close();
+
+  Serial.print("SSID: ");
+  Serial.println(ssid);
+  Serial.print("Password: ");
+  Serial.println(password);
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid.c_str(), password.c_str());
 
   Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
@@ -44,7 +67,7 @@ void setup() {
     digitalWrite(ON_Board_LED, HIGH);
     delay(250);
   }
-  digitalWrite(ON_Board_LED, HIGH); // Turn off onboard LED when connected
+  digitalWrite(ON_Board_LED, HIGH);  // Turn off onboard LED when connected
   Serial.println("");
   Serial.print("Connected to WiFi. IP address: ");
   Serial.println(WiFi.localIP());
@@ -58,7 +81,7 @@ void loop() {
     wifiManager.resetSettings();
     ESP.reset();
     Serial.println("WiFi settings reset");
-    delay(1000); 
+    delay(1000);
   }
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -68,7 +91,7 @@ void loop() {
       return;
     }
     if (!mfrc522.PICC_ReadCardSerial()) {
-      Serial.println("Card present but unable to read serial"); // Debugging line
+      Serial.println("Card present but unable to read serial");  // Debugging line
       return;
     }
 
