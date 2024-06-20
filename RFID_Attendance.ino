@@ -5,7 +5,9 @@
 #include <SD.h>
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
-#include <WiFiManager.h>  // Install author: tzapu
+#include <WiFiManager.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
 
 #define SS_PIN D4      // SDA / SS pin
 #define RST_PIN D1     // RST pin
@@ -19,6 +21,10 @@ const char* serverUrl = "http://192.168.1.21/rfiddemo/getUID.php";
 
 // Onboard LED
 #define ON_Board_LED 2  // Onboard LED
+#define LOG_FILE "/uid_log.txt" // Log file on SD card
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 19800, 60000); // NTP server, time offset (19800 for IST), update interval (60000 ms)
 
 void setup() {
   Serial.begin(115200);
@@ -27,8 +33,8 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
 
   // Initialize SPI and MFRC522
-  SPI.begin();         // Init SPI bus
-  mfrc522.PCD_Init();  // Init MFRC522 card
+  SPI.begin();
+  mfrc522.PCD_Init();
   Serial.println("MFRC522 Initialized");
 
   // Initialize SD card
@@ -71,6 +77,11 @@ void setup() {
   Serial.println("");
   Serial.print("Connected to WiFi. IP address: ");
   Serial.println(WiFi.localIP());
+
+  // Initialize NTP client
+  timeClient.begin();
+  Serial.println("NTP client initialized.");
+
   Serial.println("Please tag a card or keychain to see the UID!");
   Serial.println("");
 }
@@ -85,9 +96,10 @@ void loop() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    timeClient.update(); // Update the NTP client to get the latest time
+
     // Check for RFID card
     if (!mfrc522.PICC_IsNewCardPresent()) {
-      // Serial.println("No card present"); // Debugging line
       return;
     }
     if (!mfrc522.PICC_ReadCardSerial()) {
@@ -103,22 +115,47 @@ void loop() {
     }
     uidStr.toUpperCase();
 
-    // Print UID to Serial Monitor
+    // Get current timestamp
+    unsigned long epochTime = timeClient.getEpochTime();
+    String formattedTime = timeClient.getFormattedTime(); // Format: HH:MM:SS
+    // Convert epoch time to date
+    int year = 1970 + epochTime / 31556926;
+    int month = (epochTime % 31556926) / 2629743 + 1;
+    int day = ((epochTime % 31556926) % 2629743) / 86400 + 1;
+    String formattedDate = String(year) + "-" + String(month < 10 ? "0" : "") + String(month) + "-" + String(day < 10 ? "0" : "") + String(day);
+    String timestamp = formattedDate + " " + formattedTime; // Format: YYYY-MM-DD HH:MM:SS
+
+    // Print UID and timestamp to Serial Monitor
     Serial.print("Card UID: ");
     Serial.println(uidStr);
+    Serial.print("Timestamp: ");
+    Serial.println(timestamp);
+
+    // Store UID and timestamp to SD card
+    File logFile = SD.open(LOG_FILE, FILE_WRITE);
+    if (logFile) {
+      logFile.print("UID: ");
+      logFile.print(uidStr);
+      logFile.print(" Timestamp: ");
+      logFile.println(timestamp);
+      logFile.close();
+      Serial.println("UID and timestamp stored to SD card");
+    } else {
+      Serial.println("Error opening log file on SD card");
+    }
 
     // Trigger buzzer
     digitalWrite(BUZZER_PIN, HIGH);
     delay(100);
     digitalWrite(BUZZER_PIN, LOW);
 
-    // Send UID to server
+    // Send UID and timestamp to server
     WiFiClient client;
     HTTPClient http;
 
     http.begin(client, serverUrl);  // Specify request destination
     http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-    int httpCode = http.POST("uid=" + uidStr);  // Send the request with the uid parameter
+    int httpCode = http.POST("uid=" + uidStr + "&timestamp=" + timestamp);  // Send the request with the uid and timestamp parameters
 
     // Check the returning code
     if (httpCode > 0) {
