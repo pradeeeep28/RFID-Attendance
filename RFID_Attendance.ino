@@ -82,6 +82,13 @@ void setup() {
   timeClient.begin();
   Serial.println("NTP client initialized.");
 
+  // Fetch the current time
+  while (!timeClient.update()) {
+    Serial.println("Fetching NTP time...");
+    delay(1000); // Retry delay
+  }
+  Serial.println("NTP time fetched successfully.");
+
   Serial.println("Please tag a card or keychain to see the UID!");
   Serial.println("");
 }
